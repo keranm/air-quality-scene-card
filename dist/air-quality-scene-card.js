@@ -75,7 +75,9 @@ class AirQualitySceneCard extends HTMLElement {
     const entity = Object.keys(hass?.states ?? {}).find((id) =>
       ["pm25", "carbon_dioxide"].includes(hass.states[id]?.attributes?.device_class)
     );
-    return { entity: entity ?? "sensor.pm2_5" };
+    // Generic name so the picker preview doesn't display whichever real
+    // sensor the stub happened to grab. Cleared or replaced in the editor.
+    return { entity: entity ?? "sensor.pm2_5", name: "Air Quality" };
   }
 
   static async getConfigElement() {
