@@ -1,0 +1,6 @@
+{
+  "name": "Air Quality Scene Card",
+  "render_readme": true,
+  "filename": "air-quality-scene-card.js",
+  "homeassistant": "2024.6.0"
+}
