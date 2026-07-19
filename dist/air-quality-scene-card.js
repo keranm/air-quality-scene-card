@@ -764,10 +764,18 @@ class AirQualitySceneCardEditor extends HTMLElement {
   }
 }
 
-customElements.define("air-quality-scene-card", AirQualitySceneCard);
-customElements.define("air-quality-scene-card-editor", AirQualitySceneCardEditor);
+// Evaluated twice when loaded both via `frontend: extra_module_url:` and as a
+// HACS Lovelace resource (the ?hacstag= query string makes it a distinct
+// module). Re-defining a tag throws, so guard every registration.
+if (!customElements.get("air-quality-scene-card")) {
+  customElements.define("air-quality-scene-card", AirQualitySceneCard);
+}
+if (!customElements.get("air-quality-scene-card-editor")) {
+  customElements.define("air-quality-scene-card-editor", AirQualitySceneCardEditor);
+}
 
 window.customCards = window.customCards || [];
+if (!window.customCards.some((c) => c.type === "air-quality-scene-card"))
 window.customCards.push({
   type: "air-quality-scene-card",
   name: "Air Quality Scene Card",
