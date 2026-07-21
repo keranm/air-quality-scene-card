@@ -8,16 +8,24 @@
  * with a 24 h chart, 12/24 h averages and a 10-day-by-hour heatmap built
  * from Home Assistant's own recorder statistics.
  *
- * Two metrics are supported (config `metric`, auto-detected from the
- * entity's device_class when omitted):
+ * Five headline metrics are supported (config `metric`, auto-detected from the
+ * entity's device_class — or entity_id, for the unitless indices — when
+ * omitted):
  *   - pm25: US EPA May-2024 PM2.5 categories, WHO guideline comparison and
  *     cigarette equivalent.
  *   - co2: indoor-ventilation categories (fresh outdoor air is ~420 ppm;
  *     1000 ppm is the classic "ventilate now" line; 5000 ppm is the OSHA
  *     8-hour workplace limit), with peak and time-above-1000-ppm tiles.
+ *   - pm10: US EPA PM10 AQI breakpoints (24-hour).
+ *   - voc: Sensirion VOC Index (100 = recent running-average baseline).
+ *   - nox: Sensirion NOx Index (1 = clean-air baseline, spikes on events).
+ * The last three also render a peak and a time-above-baseline tile.
  *
- * Temperature, humidity and the other pollutant are auto-discovered from
- * sibling entities on the same device, or can be set explicitly.
+ * Secondary readings (temperature, humidity, and every sibling pollutant —
+ * CO₂, PM1/2.5/10, PM0.3 count, VOC, NOx) are auto-discovered from entities on
+ * the same device and shown as chips, or can be set explicitly. The `chips`
+ * option chooses between "auto" (all discovered readings) and "minimal"
+ * (temperature, humidity and one complementary pollutant), or an explicit list.
  */
 
 const PM25_CATEGORIES = [
@@ -38,13 +46,44 @@ const CO2_CATEGORIES = [
   { max: Infinity, key: "hazardous", label: "Extreme", color: "#7f0f3e", sky: ["#f0d3de", "#faf0f4"], ground: "#9c4a6b", mood: "sad" },
 ];
 
+// US EPA PM10 AQI breakpoints (24-hour average, µg/m³).
+const PM10_CATEGORIES = [
+  { max: 54, key: "good", label: "Good", color: "#43a047", sky: ["#dcf3dd", "#f2faf0"], ground: "#66bb6a", mood: "happy" },
+  { max: 154, key: "moderate", label: "Moderate", color: "#fbc02d", sky: ["#fdf3d5", "#fbfaf2"], ground: "#c9b458", mood: "ok" },
+  { max: 254, key: "usg", label: "Unhealthy for Sensitive Groups", color: "#ef6c00", sky: ["#fde5cc", "#fdf6ef"], ground: "#e09a52", mood: "meh" },
+  { max: 354, key: "unhealthy", label: "Unhealthy", color: "#e53935", sky: ["#fbdad8", "#fdf1f0"], ground: "#d96a63", mood: "sad" },
+  { max: 424, key: "very_unhealthy", label: "Very Unhealthy", color: "#8e24aa", sky: ["#ecd9f2", "#f8f1fa"], ground: "#a35cb5", mood: "sad" },
+  { max: Infinity, key: "hazardous", label: "Hazardous", color: "#7f0f3e", sky: ["#f0d3de", "#faf0f4"], ground: "#9c4a6b", mood: "sad" },
+];
+
+// Sensirion VOC Index (1–500). 100 is the sensor's own recent running-average
+// baseline; higher means more VOCs than usual for this room.
+const VOC_CATEGORIES = [
+  { max: 100, key: "good", label: "Clean", color: "#43a047", sky: ["#dcf3dd", "#f2faf0"], ground: "#66bb6a", mood: "happy" },
+  { max: 200, key: "moderate", label: "Normal", color: "#fbc02d", sky: ["#fdf3d5", "#fbfaf2"], ground: "#c9b458", mood: "ok" },
+  { max: 300, key: "usg", label: "Elevated", color: "#ef6c00", sky: ["#fde5cc", "#fdf6ef"], ground: "#e09a52", mood: "meh" },
+  { max: 400, key: "unhealthy", label: "High", color: "#e53935", sky: ["#fbdad8", "#fdf1f0"], ground: "#d96a63", mood: "sad" },
+  { max: Infinity, key: "very_unhealthy", label: "Very High", color: "#8e24aa", sky: ["#ecd9f2", "#f8f1fa"], ground: "#a35cb5", mood: "sad" },
+];
+
+// Sensirion NOx Index (1–500). Sits at 1 in clean air and only rises during
+// nitrogen-oxide events (cooking, combustion, traffic).
+const NOX_CATEGORIES = [
+  { max: 20, key: "good", label: "Baseline", color: "#43a047", sky: ["#dcf3dd", "#f2faf0"], ground: "#66bb6a", mood: "happy" },
+  { max: 150, key: "moderate", label: "Moderate", color: "#fbc02d", sky: ["#fdf3d5", "#fbfaf2"], ground: "#c9b458", mood: "ok" },
+  { max: 300, key: "usg", label: "Elevated", color: "#ef6c00", sky: ["#fde5cc", "#fdf6ef"], ground: "#e09a52", mood: "meh" },
+  { max: Infinity, key: "unhealthy", label: "High", color: "#e53935", sky: ["#fbdad8", "#fdf1f0"], ground: "#d96a63", mood: "sad" },
+];
+
 const WHO_ANNUAL_PM25 = 5.0; // µg/m³, WHO 2021 annual guideline
 const UG_PER_CIGARETTE_DAY = 22; // Berkeley Earth: 22 µg/m³ over 24 h ≈ 1 cigarette
 const CO2_VENTILATE_PPM = 1000; // classic Pettenkofer / ASHRAE-era comfort line
 
 const METRICS = {
   pm25: {
+    key: "pm25",
     labelHtml: "PM<sub>2.5</sub>",
+    short: "PM2.5",
     unit: "µg/m³",
     decimals: 1,
     deviceClass: "pm25",
@@ -55,7 +94,9 @@ const METRICS = {
       "Categories follow the US EPA PM2.5 breakpoints (May 2024). History recorded by Home Assistant's long-term statistics.",
   },
   co2: {
+    key: "co2",
     labelHtml: "CO<sub>2</sub>",
+    short: "CO₂",
     unit: "ppm",
     decimals: 0,
     deviceClass: "carbon_dioxide",
@@ -65,7 +106,67 @@ const METRICS = {
     attribution:
       "Categories based on common indoor-ventilation guidance (fresh outdoor air ≈ 420 ppm; 5000 ppm is the OSHA 8-hour limit). History recorded by Home Assistant's long-term statistics.",
   },
+  pm10: {
+    key: "pm10",
+    labelHtml: "PM<sub>10</sub>",
+    short: "PM10",
+    unit: "µg/m³",
+    decimals: 0,
+    deviceClass: "pm10",
+    chartFloor: 55,
+    categories: PM10_CATEGORIES,
+    nameSuffix: /\s*PM\s*10$/i,
+    attribution:
+      "Categories follow the US EPA PM10 AQI breakpoints (24-hour). History recorded by Home Assistant's long-term statistics.",
+  },
+  voc: {
+    key: "voc",
+    labelHtml: "VOC index",
+    short: "VOC index",
+    unit: "",
+    decimals: 0,
+    deviceClass: null,
+    idRe: /_[tv]?voc(_index)?$/i,
+    chartFloor: 200,
+    categories: VOC_CATEGORIES,
+    nameSuffix: /\s*[TV]?VOCs?(\s*index)?$/i,
+    attribution:
+      "Sensirion VOC Index: 100 is the sensor's recent running-average baseline; higher means more volatile organic compounds than usual for this room. History recorded by Home Assistant's long-term statistics.",
+  },
+  nox: {
+    key: "nox",
+    labelHtml: "NOx index",
+    short: "NOx index",
+    unit: "",
+    decimals: 0,
+    deviceClass: null,
+    idRe: /_nox(_index)?$/i,
+    chartFloor: 30,
+    categories: NOX_CATEGORIES,
+    nameSuffix: /\s*NOx(\s*index)?$/i,
+    attribution:
+      "Sensirion NOx Index: 1 is the clean-air baseline; it rises during nitrogen-oxide events such as cooking or combustion. History recorded by Home Assistant's long-term statistics.",
+  },
 };
+
+// Every secondary reading the card can discover on the same device and show as
+// a chip. `dc` is the Home Assistant device_class when the platform sets one;
+// `idRe` matches the entity_id for readings that carry none (VOC/NOx indices
+// and the PM0.3 particle count). Explicit config overrides win over discovery.
+const READINGS = {
+  temperature: { dc: "temperature", icon: "mdi:thermometer", unit: "°", digits: 0 },
+  humidity: { dc: "humidity", icon: "mdi:water-percent", unit: "%", digits: 0 },
+  co2: { dc: "carbon_dioxide", icon: "mdi:molecule-co2", unit: "", digits: 0 },
+  pm25: { dc: "pm25", icon: "mdi:blur", unit: "", digits: 1 },
+  pm1: { dc: "pm1", icon: "mdi:blur", unit: "", digits: 0 },
+  pm10: { dc: "pm10", icon: "mdi:blur", unit: "", digits: 0 },
+  pm03: { icon: "mdi:grain", unit: "", digits: 0, idRe: /_pm_?0_?3$/i },
+  voc: { icon: "mdi:radar", unit: "", digits: 0, idRe: /_[tv]?voc(_index)?$/i },
+  nox: { icon: "mdi:radar", unit: "", digits: 0, idRe: /_nox(_index)?$/i },
+};
+
+// Order chips appear in when `chips: auto`.
+const CHIP_ORDER = ["temperature", "humidity", "co2", "pm25", "pm1", "pm10", "pm03", "voc", "nox"];
 
 const fmt = (v, digits = 1) =>
   v == null || Number.isNaN(v) ? "–" : Number(v).toFixed(digits).replace(/\.0$/, "");
@@ -89,7 +190,19 @@ class AirQualitySceneCard extends HTMLElement {
       throw new Error("air-quality-scene-card: 'entity' (a PM2.5 or CO₂ sensor) is required");
     }
     if (config.metric && !METRICS[config.metric]) {
-      throw new Error("air-quality-scene-card: 'metric' must be 'pm25' or 'co2'");
+      throw new Error(
+        "air-quality-scene-card: 'metric' must be one of: " + Object.keys(METRICS).join(", ")
+      );
+    }
+    if (
+      config.chips != null &&
+      config.chips !== "auto" &&
+      config.chips !== "minimal" &&
+      !Array.isArray(config.chips)
+    ) {
+      throw new Error(
+        "air-quality-scene-card: 'chips' must be 'auto', 'minimal', or a list of reading keys"
+      );
     }
     this._config = config;
     this._statsCacheAt = 0;
@@ -97,11 +210,22 @@ class AirQualitySceneCard extends HTMLElement {
     this._built = false;
   }
 
-  /** The active metric: explicit config, else the entity's device_class, else pm25. */
+  /** The active metric: explicit config, else inferred from the entity, else pm25. */
   _metric() {
     if (this._config.metric) return METRICS[this._config.metric];
-    const dc = this._hass?.states[this._config.entity]?.attributes?.device_class;
-    return dc === "carbon_dioxide" ? METRICS.co2 : METRICS.pm25;
+    return this._metricForEntity(this._config.entity);
+  }
+
+  /** Infer a headline metric from an entity's device_class, or entity_id for
+   * the unitless indices (which carry no device_class). Falls back to pm25. */
+  _metricForEntity(entityId) {
+    const dc = this._hass?.states[entityId]?.attributes?.device_class;
+    const byDc = { carbon_dioxide: "co2", pm25: "pm25", pm10: "pm10" }[dc];
+    if (byDc) return METRICS[byDc];
+    for (const key of ["voc", "nox"]) {
+      if (METRICS[key].idRe?.test(entityId)) return METRICS[key];
+    }
+    return METRICS.pm25;
   }
 
   _categoryFor(value) {
@@ -109,13 +233,31 @@ class AirQualitySceneCard extends HTMLElement {
     return cats.find((c) => value <= c.max) ?? cats[cats.length - 1];
   }
 
+  /** Which secondary readings to show as chips, honouring the `chips` option.
+   *  auto (default): every discovered reading except the headline one.
+   *  minimal: temperature, humidity and one complementary pollutant.
+   *  array: exactly the listed reading keys, in that order. */
+  _chipKeys(metric) {
+    const chips = this._config.chips ?? "auto";
+    if (Array.isArray(chips)) return chips;
+    if (chips === "minimal") {
+      return ["temperature", "humidity", metric === METRICS.co2 ? "pm25" : "co2"];
+    }
+    return CHIP_ORDER.filter((k) => k !== metric.key);
+  }
+
   set hass(hass) {
     this._hass = hass;
-    const state = hass.states[this._config.entity];
-    const fingerprint = state
-      ? `${state.state}|${state.last_updated}|${this._relatedIds(state).join()}`
-      : "missing";
     if (!this._built) this._build();
+    const state = hass.states[this._config.entity];
+    // Re-render when the primary reading changes, or when any discovered chip
+    // value changes (they update together on each device poll).
+    const relSig = state
+      ? this._relatedIds(state).map((id) => hass.states[id]?.state).join()
+      : "";
+    const fingerprint = state
+      ? `${state.state}|${state.last_updated}|${relSig}`
+      : "missing";
     if (fingerprint !== this._fingerprint) {
       this._fingerprint = fingerprint;
       this._update();
@@ -144,15 +286,20 @@ class AirQualitySceneCard extends HTMLElement {
       for (const sib of siblings) {
         if (sib.entity_id === this._config.entity) continue;
         const st = hass.states[sib.entity_id];
-        const dc = st?.attributes?.device_class;
-        if (dc === "temperature") related.temperature ??= sib.entity_id;
-        else if (dc === "humidity") related.humidity ??= sib.entity_id;
-        else if (dc === "carbon_dioxide") related.co2 ??= sib.entity_id;
-        else if (dc === "pm25") related.pm25 ??= sib.entity_id;
+        if (!st) continue;
+        const dc = st.attributes?.device_class;
+        for (const [key, r] of Object.entries(READINGS)) {
+          if (related[key]) continue;
+          if ((r.dc && dc === r.dc) || (r.idRe && r.idRe.test(sib.entity_id))) {
+            related[key] = sib.entity_id;
+            break;
+          }
+        }
       }
     }
-    for (const k of ["temperature", "humidity", "co2", "pm25"]) {
-      if (this._config[k]) related[k] = this._config[k];
+    // Explicit overrides from config always win over discovery.
+    for (const key of Object.keys(READINGS)) {
+      if (this._config[key]) related[key] = this._config[key];
     }
     this._related = related;
     this._relatedFor = this._config.entity;
@@ -266,20 +413,15 @@ class AirQualitySceneCard extends HTMLElement {
     root.querySelector(".pm-value").textContent = fmt(value, metric.decimals);
     root.querySelector(".mascot").innerHTML = this._mascotSvg(cat.mood);
 
-    const chips = [];
-    const chip = (id, icon, unit, digits = 0) => {
-      const st = id && hass.states[id];
-      if (!st || isNaN(Number(st.state))) return;
-      chips.push(
-        `<span class="chip"><ha-icon icon="${icon}"></ha-icon>${fmt(Number(st.state), digits)}${unit}</span>`
-      );
-    };
     this._relatedIds(state);
-    chip(this._related.temperature, "mdi:thermometer", "°");
-    chip(this._related.humidity, "mdi:water-percent", "%");
-    if (metric === METRICS.co2) chip(this._related.pm25, "mdi:blur", "");
-    else chip(this._related.co2, "mdi:molecule-co2", "");
-    root.querySelector(".chips").innerHTML = chips.join("");
+    root.querySelector(".chips").innerHTML = this._chipKeys(metric)
+      .map((key) => {
+        const r = READINGS[key];
+        const st = r && this._related[key] && hass.states[this._related[key]];
+        if (!st || isNaN(Number(st.state))) return "";
+        return `<span class="chip"><ha-icon icon="${r.icon}"></ha-icon>${fmt(Number(st.state), r.digits)}${r.unit}</span>`;
+      })
+      .join("");
 
     if (!root.querySelector(".overlay").hidden) this._renderOverlay();
   }
@@ -394,7 +536,7 @@ class AirQualitySceneCard extends HTMLElement {
               "Time past the ventilate line in the last 24 h"
             )
           : pending(`Above ${CO2_VENTILATE_PPM} ppm`));
-    } else {
+    } else if (metric === METRICS.pm25) {
       const dailyMeans = stats.daily.filter((r) => r.mean != null);
       const avg30d = dailyMeans.length
         ? dailyMeans.reduce((a, r) => a + r.mean, 0) / dailyMeans.length
@@ -417,6 +559,32 @@ class AirQualitySceneCard extends HTMLElement {
               cigarettes.toFixed(1),
               `Equivalent pollution over the last ${dailyMeans.length} day${dailyMeans.length === 1 ? "" : "s"}`
             ));
+    } else {
+      // pm10 / voc / nox: peak reading and time spent above the "good" ceiling.
+      const rows24 = rowsOfLast(fine, 24 * 3600e3);
+      const peak24 = rows24.length
+        ? Math.max(...rows24.map((r) => r.max ?? r.mean))
+        : null;
+      const thr = metric.categories[0].max;
+      const rowMs = stats.short.length ? 5 * 60e3 : 3600e3;
+      const aboveH = (rows24.filter((r) => r.mean > thr).length * rowMs) / 3600e3;
+      const u = metric.unit ? ` ${metric.unit}` : "";
+      const above = `Above ${fmt(thr, metric.decimals)}${u}`;
+      extraTiles =
+        (peak24 == null
+          ? pending("Peak — last 24 h")
+          : tile(
+              "Peak — last 24 h",
+              `${fmt(peak24, metric.decimals)}${u}`,
+              `Highest reading · ${this._categoryFor(peak24).label}`
+            )) +
+        (rows24.length
+          ? tile(
+              above,
+              aboveH < 0.1 ? "0 h" : `${fmt(aboveH, 1)} h`,
+              `Time above the ${metric.categories[0].label.toLowerCase()} range in the last 24 h`
+            )
+          : pending(above));
     }
 
     overlay.innerHTML = `
@@ -432,8 +600,8 @@ class AirQualitySceneCard extends HTMLElement {
           </div>
         </div>
         <div class="tiles">
-          ${tile("Last 24 h", avg24 == null ? "…" : `${fmt(avg24, metric.decimals)} ${metric.unit}`, `average ${metric.unit === "ppm" ? "CO₂" : "PM2.5"}`)}
-          ${tile("Last 12 h", avg12 == null ? "…" : `${fmt(avg12, metric.decimals)} ${metric.unit}`, `average ${metric.unit === "ppm" ? "CO₂" : "PM2.5"}`)}
+          ${tile("Last 24 h", avg24 == null ? "…" : `${fmt(avg24, metric.decimals)} ${metric.unit}`.trim(), `average ${metric.short}`)}
+          ${tile("Last 12 h", avg12 == null ? "…" : `${fmt(avg12, metric.decimals)} ${metric.unit}`.trim(), `average ${metric.short}`)}
           ${extraTiles}
         </div>
         <div class="section">
@@ -627,7 +795,7 @@ class AirQualitySceneCard extends HTMLElement {
     .scene[data-category="moderate"] .strip { color: rgba(0,0,0,.8); }
     .scene[data-category="offline"] .strip { background: #9e9e9e; }
     .pm-value { font-size: 1.25rem; }
-    .chips { display: flex; gap: 10px; font-size: .9rem; }
+    .chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 10px; font-size: .9rem; }
     .chip { display: inline-flex; align-items: center; gap: 2px; }
     .chip ha-icon { --mdc-icon-size: 16px; }
 
@@ -715,6 +883,7 @@ class AirQualitySceneCardEditor extends HTMLElement {
           metric: "Primary reading",
           entity: "Sensor",
           name: "Name (optional)",
+          chips: "Secondary chips",
           temperature: "Temperature sensor (optional — auto-detected)",
           humidity: "Humidity sensor (optional — auto-detected)",
           co2: "CO₂ sensor (optional — auto-detected)",
@@ -729,8 +898,13 @@ class AirQualitySceneCardEditor extends HTMLElement {
       this.appendChild(this._form);
     }
     const metric = this._config?.metric ?? "pm25";
+    // VOC/NOx indices carry no device_class, so the entity picker can't filter
+    // by one — offer any sensor for those.
+    const entityDc = { pm25: "pm25", co2: "carbon_dioxide", pm10: "pm10" }[metric];
+    // A YAML-set explicit chip list can't be shown in the dropdown; fall back to auto.
+    const chips = Array.isArray(this._config?.chips) ? "auto" : this._config?.chips ?? "auto";
     this._form.hass = this._hass;
-    this._form.data = { metric, ...this._config };
+    this._form.data = { metric, chips, ...this._config };
     this._form.schema = [
       {
         name: "metric",
@@ -740,6 +914,9 @@ class AirQualitySceneCardEditor extends HTMLElement {
             options: [
               { value: "pm25", label: "PM2.5 — US EPA categories" },
               { value: "co2", label: "CO₂ — ventilation categories" },
+              { value: "pm10", label: "PM10 — US EPA categories" },
+              { value: "voc", label: "VOC index — Sensirion scale" },
+              { value: "nox", label: "NOx index — Sensirion scale" },
             ],
           },
         },
@@ -748,13 +925,22 @@ class AirQualitySceneCardEditor extends HTMLElement {
         name: "entity",
         required: true,
         selector: {
-          entity: {
-            domain: "sensor",
-            device_class: metric === "co2" ? "carbon_dioxide" : "pm25",
-          },
+          entity: entityDc ? { domain: "sensor", device_class: entityDc } : { domain: "sensor" },
         },
       },
       { name: "name", selector: { text: {} } },
+      {
+        name: "chips",
+        selector: {
+          select: {
+            mode: "dropdown",
+            options: [
+              { value: "auto", label: "All readings on the device" },
+              { value: "minimal", label: "Minimal — temperature, humidity & one pollutant" },
+            ],
+          },
+        },
+      },
       { name: "temperature", selector: { entity: { domain: "sensor", device_class: "temperature" } } },
       { name: "humidity", selector: { entity: { domain: "sensor", device_class: "humidity" } } },
       metric === "co2"
@@ -780,7 +966,7 @@ window.customCards.push({
   type: "air-quality-scene-card",
   name: "Air Quality Scene Card",
   description:
-    "Animated air-quality card for any PM2.5 or CO₂ sensor, with tap-to-expand charts and history.",
+    "Animated air-quality card for PM2.5, CO₂, PM10, VOC or NOx, with auto-discovered chips and tap-to-expand charts and history.",
   preview: true,
   documentationURL: "https://github.com/keranm/air-quality-scene-card",
 });
