@@ -170,6 +170,8 @@ const READINGS = {
 // Order chips appear in when `chips: auto`.
 const CHIP_ORDER = ["temperature", "humidity", "co2", "pm25", "pm1", "pm10", "pm03", "voc", "nox"];
 
+const CARD_VERSION = "1.2.1";
+
 const fmt = (v, digits = 1) =>
   v == null || Number.isNaN(v) ? "–" : Number(v).toFixed(digits).replace(/\.0$/, "");
 
@@ -1029,12 +1031,18 @@ if (!customElements.get("air-quality-scene-card-editor")) {
 }
 
 window.customCards = window.customCards || [];
-if (!window.customCards.some((c) => c.type === "air-quality-scene-card"))
-window.customCards.push({
-  type: "air-quality-scene-card",
-  name: "Air Quality Scene Card",
-  description:
-    "Animated air-quality card for PM2.5, CO₂, PM10, VOC or NOx, with auto-discovered chips and tap-to-expand charts and history.",
-  preview: true,
-  documentationURL: "https://github.com/keranm/air-quality-scene-card",
-});
+if (!window.customCards.some((c) => c.type === "air-quality-scene-card")) {
+  window.customCards.push({
+    type: "air-quality-scene-card",
+    name: "Air Quality Scene Card",
+    description:
+      "Animated air-quality card for PM2.5, CO₂, PM10, VOC or NOx, with auto-discovered chips and tap-to-expand charts and history.",
+    preview: true,
+    documentationURL: "https://github.com/keranm/air-quality-scene-card",
+  });
+  console.info(
+    `%c AIR-QUALITY-SCENE-CARD %c v${CARD_VERSION} `,
+    "color:#fff;background:#43a047;font-weight:700;border-radius:3px 0 0 3px",
+    "color:#43a047;background:#dcf3dd;border-radius:0 3px 3px 0"
+  );
+}
