@@ -130,7 +130,7 @@ and NOx indices, from its entity_id.
 | `entity` | ✅ | The sensor to display (PM2.5, CO₂, PM10, VOC index or NOx index). |
 | `metric` | – | `pm25`, `co2`, `pm10`, `voc` or `nox`. Default: inferred from the entity. |
 | `name` | – | Override the title (defaults to the device name). |
-| `chips` | – | `auto` (default — every discovered reading except the headline) or `minimal` (temperature, humidity and one pollutant). Can also be an explicit list of reading keys, e.g. `[temperature, humidity, pm25, voc]`. |
+| `chips` | – | `auto` (default — every discovered reading except the headline), `minimal` (temperature, humidity and one pollutant), or an explicit list of reading keys, e.g. `[temperature, humidity, pm25, voc]`. In the visual editor this is **All readings** / **Minimal** / **Customise** — Customise shows a tick-list of every reading plus a sensor picker for each ticked one. |
 | `temperature` | – | Explicit temperature entity (otherwise auto-detected). |
 | `humidity` | – | Explicit humidity entity (otherwise auto-detected). |
 | `co2` / `pm25` / `pm1` / `pm10` / `pm03` / `voc` / `nox` | – | Explicit entity for any secondary chip (otherwise auto-detected). |

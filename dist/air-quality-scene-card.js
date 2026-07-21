@@ -170,7 +170,20 @@ const READINGS = {
 // Order chips appear in when `chips: auto`.
 const CHIP_ORDER = ["temperature", "humidity", "co2", "pm25", "pm1", "pm10", "pm03", "voc", "nox"];
 
-const CARD_VERSION = "1.2.1";
+// Friendly labels for the editor's reading pickers / tick list.
+const READING_LABELS = {
+  temperature: "Temperature",
+  humidity: "Humidity",
+  co2: "CO₂",
+  pm25: "PM2.5",
+  pm1: "PM1",
+  pm10: "PM10",
+  pm03: "PM0.3",
+  voc: "VOC index",
+  nox: "NOx index",
+};
+
+const CARD_VERSION = "1.3.0";
 
 const fmt = (v, digits = 1) =>
   v == null || Number.isNaN(v) ? "–" : Number(v).toFixed(digits).replace(/\.0$/, "");
@@ -271,7 +284,7 @@ class AirQualitySceneCard extends HTMLElement {
    *  array: exactly the listed reading keys, in that order. */
   _chipKeys(metric) {
     const chips = this._config.chips ?? "auto";
-    if (Array.isArray(chips)) return chips;
+    if (Array.isArray(chips)) return chips.filter((k) => k !== metric.key);
     if (chips === "minimal") {
       return ["temperature", "humidity", metric === METRICS.co2 ? "pm25" : "co2"];
     }
@@ -948,34 +961,50 @@ class AirQualitySceneCardEditor extends HTMLElement {
       await helpers?.createCardElement({ type: "entities", entities: [] })
         ?.constructor?.getConfigElement?.();
       this._form = document.createElement("ha-form");
-      this._form.computeLabel = (s) =>
-        ({
+      this._form.computeLabel = (s) => {
+        const fixed = {
           metric: "Primary reading",
           entity: "Sensor",
           name: "Name (optional)",
-          chips: "Secondary chips",
-          temperature: "Temperature sensor (optional — auto-detected)",
-          humidity: "Humidity sensor (optional — auto-detected)",
-          co2: "CO₂ sensor (optional — auto-detected)",
-          pm25: "PM2.5 sensor (optional — auto-detected)",
-        })[s.name] ?? s.name;
+          chips_mode: "Secondary chips",
+          chips_items: "Readings to show",
+        };
+        if (fixed[s.name]) return fixed[s.name];
+        if (READING_LABELS[s.name]) return `${READING_LABELS[s.name]} sensor (auto-detected)`;
+        return s.name;
+      };
       this._form.addEventListener("value-changed", (ev) => {
-        const config = { type: "custom:air-quality-scene-card", ...ev.detail.value };
+        const config = this._configFromForm(ev.detail.value);
         this.dispatchEvent(
           new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true })
         );
       });
       this.appendChild(this._form);
     }
-    const metric = this._config?.metric ?? "pm25";
+    const cfg = this._config ?? {};
+    const metric = cfg.metric ?? "pm25";
     // VOC/NOx indices carry no device_class, so the entity picker can't filter
     // by one — offer any sensor for those.
     const entityDc = { pm25: "pm25", co2: "carbon_dioxide", pm10: "pm10" }[metric];
-    // A YAML-set explicit chip list can't be shown in the dropdown; fall back to auto.
-    const chips = Array.isArray(this._config?.chips) ? "auto" : this._config?.chips ?? "auto";
+
+    // Chips: an array in config means "custom"; otherwise it's the string mode.
+    // Never offer the headline reading as a chip — it's already the big number.
+    const rawChips = cfg.chips ?? "auto";
+    const mode = Array.isArray(rawChips) ? "custom" : rawChips;
+    const allItems = CHIP_ORDER.filter((k) => k !== metric);
+    const items = (Array.isArray(rawChips) ? rawChips : allItems).filter((k) => k !== metric);
+
     this._form.hass = this._hass;
-    this._form.data = { metric, chips, ...this._config };
-    this._form.schema = [
+    this._form.data = {
+      metric,
+      entity: cfg.entity,
+      name: cfg.name,
+      chips_mode: mode,
+      chips_items: items,
+      ...Object.fromEntries(Object.keys(READINGS).map((k) => [k, cfg[k]]).filter(([, v]) => v != null)),
+    };
+
+    const schema = [
       {
         name: "metric",
         selector: {
@@ -1000,23 +1029,67 @@ class AirQualitySceneCardEditor extends HTMLElement {
       },
       { name: "name", selector: { text: {} } },
       {
-        name: "chips",
+        name: "chips_mode",
         selector: {
           select: {
             mode: "dropdown",
             options: [
               { value: "auto", label: "All readings on the device" },
               { value: "minimal", label: "Minimal — temperature, humidity & one pollutant" },
+              { value: "custom", label: "Customise — pick readings & assign sensors" },
             ],
           },
         },
       },
-      { name: "temperature", selector: { entity: { domain: "sensor", device_class: "temperature" } } },
-      { name: "humidity", selector: { entity: { domain: "sensor", device_class: "humidity" } } },
-      metric === "co2"
-        ? { name: "pm25", selector: { entity: { domain: "sensor", device_class: "pm25" } } }
-        : { name: "co2", selector: { entity: { domain: "sensor", device_class: "carbon_dioxide" } } },
     ];
+
+    if (mode === "custom") {
+      // Tick which readings to show…
+      schema.push({
+        name: "chips_items",
+        selector: {
+          select: {
+            multiple: true,
+            mode: "list",
+            options: allItems.map((k) => ({ value: k, label: READING_LABELS[k] ?? k })),
+          },
+        },
+      });
+      // …then assign a sensor to each ticked one (blank = auto-detect from the device).
+      for (const k of items) {
+        const dc = READINGS[k]?.dc;
+        schema.push({
+          name: k,
+          selector: { entity: dc ? { domain: "sensor", device_class: dc } : { domain: "sensor" } },
+        });
+      }
+    }
+
+    this._form.schema = schema;
+  }
+
+  /** Translate the editor form's values (which use synthetic chips_mode /
+   *  chips_items fields) back into a real card config. */
+  _configFromForm(v) {
+    const config = { type: "custom:air-quality-scene-card", metric: v.metric, entity: v.entity };
+    if (v.name) config.name = v.name;
+
+    if (v.chips_mode === "custom") {
+      const list = Array.isArray(v.chips_items)
+        ? v.chips_items
+        : CHIP_ORDER.filter((k) => k !== v.metric);
+      config.chips = list.filter((k) => k !== v.metric);
+    } else if (v.chips_mode === "minimal") {
+      config.chips = "minimal";
+    } else {
+      config.chips = "auto";
+    }
+
+    // Per-reading entity overrides (only those the form currently carries).
+    for (const k of Object.keys(READINGS)) {
+      if (v[k]) config[k] = v[k];
+    }
+    return config;
   }
 }
 
