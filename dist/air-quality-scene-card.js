@@ -153,16 +153,18 @@ const METRICS = {
 // a chip. `dc` is the Home Assistant device_class when the platform sets one;
 // `idRe` matches the entity_id for readings that carry none (VOC/NOx indices
 // and the PM0.3 particle count). Explicit config overrides win over discovery.
+// Each reading gets a distinct icon so the chips are legible at a glance even
+// when several are shown together (three PM sizes, two Sensirion indices).
 const READINGS = {
   temperature: { dc: "temperature", icon: "mdi:thermometer", unit: "°", digits: 0 },
   humidity: { dc: "humidity", icon: "mdi:water-percent", unit: "%", digits: 0 },
   co2: { dc: "carbon_dioxide", icon: "mdi:molecule-co2", unit: "", digits: 0 },
   pm25: { dc: "pm25", icon: "mdi:blur", unit: "", digits: 1 },
-  pm1: { dc: "pm1", icon: "mdi:blur", unit: "", digits: 0 },
-  pm10: { dc: "pm10", icon: "mdi:blur", unit: "", digits: 0 },
+  pm1: { dc: "pm1", icon: "mdi:blur-radial", unit: "", digits: 0 },
+  pm10: { dc: "pm10", icon: "mdi:dots-grid", unit: "", digits: 0 },
   pm03: { icon: "mdi:grain", unit: "", digits: 0, idRe: /_pm_?0_?3$/i },
-  voc: { icon: "mdi:radar", unit: "", digits: 0, idRe: /_[tv]?voc(_index)?$/i },
-  nox: { icon: "mdi:radar", unit: "", digits: 0, idRe: /_nox(_index)?$/i },
+  voc: { icon: "mdi:scent", unit: "", digits: 0, idRe: /_[tv]?voc(_index)?$/i },
+  nox: { icon: "mdi:smog", unit: "", digits: 0, idRe: /_nox(_index)?$/i },
 };
 
 // Order chips appear in when `chips: auto`.
