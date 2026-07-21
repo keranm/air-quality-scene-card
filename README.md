@@ -36,8 +36,10 @@ no API** — it reads whatever sensor entities you already have.
   NOx) auto-discovered from the same device. The `chips` option chooses between showing all
   of them or a minimal set.
 - **Tap to expand** into a detail sheet with a colour-coded **24-hour chart**, **12 h / 24 h
-  averages**, metric-specific insight tiles, and a **10-days-by-hour heatmap**, all built
-  from Home Assistant's own recorder statistics.
+  averages**, metric-specific insight tiles, and a **10-days-by-hour heatmap** for the primary
+  reading — then, stacked below, a **24-hour chart for every other reading** the sensor
+  exposes, so one scroll shows the whole device's last day. All built from Home Assistant's own
+  recorder statistics.
 - **Five primary metrics**, selectable per card:
 
   | `metric` | Categories | Insight tiles |

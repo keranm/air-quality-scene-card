@@ -231,8 +231,36 @@ class AirQualitySceneCard extends HTMLElement {
   }
 
   _categoryFor(value) {
-    const cats = this._metric().categories;
+    return this._catForMetric(this._metric(), value);
+  }
+
+  _catForMetric(metric, value) {
+    const cats = metric.categories;
     return cats.find((c) => value <= c.max) ?? cats[cats.length - 1];
+  }
+
+  /** A metric-like descriptor for any reading, used to draw its 24 h chart in
+   *  the expanded view. The five headline readings reuse their full category
+   *  scale; the rest get a sensible unit/precision and a single neutral colour
+   *  (PM1 borrows the PM2.5 scale as a reasonable stand-in). */
+  _readingMetric(key) {
+    const headline = { co2: "co2", pm25: "pm25", pm10: "pm10", voc: "voc", nox: "nox" }[key];
+    if (headline) return METRICS[headline];
+    const st = this._related?.[key] && this._hass.states[this._related[key]];
+    const unit = st?.attributes?.unit_of_measurement ?? READINGS[key]?.unit ?? "";
+    const base = {
+      pm1: { labelHtml: "PM<sub>1</sub>", short: "PM1", decimals: 0, chartFloor: 5, categories: PM25_CATEGORIES },
+      pm03: { labelHtml: "PM<sub>0.3</sub>", short: "PM0.3", decimals: 0, chartFloor: 0, color: "#5c6bc0" },
+      temperature: { labelHtml: "Temperature", short: "Temperature", decimals: 1, chartFloor: 0, color: "#ff8f00" },
+      humidity: { labelHtml: "Humidity", short: "Humidity", decimals: 0, chartFloor: 100, color: "#29b6f6" },
+    }[key] ?? { labelHtml: key, short: key, decimals: 0, chartFloor: 0, color: "#607d8b" };
+    return {
+      ...base,
+      unit,
+      categories:
+        base.categories ??
+        [{ max: Infinity, label: base.short, color: base.color, mood: "ok", sky: ["#fff", "#fff"], ground: base.color }],
+    };
   }
 
   /** Which secondary readings to show as chips, honouring the `chips` option.
@@ -458,25 +486,39 @@ class AirQualitySceneCard extends HTMLElement {
     const dayMs = 24 * 3600 * 1000;
     const iso = (d) => new Date(d).toISOString();
 
-    const call = (period, startMs) =>
+    const call = (statId, period, startMs) =>
       hass
         .callWS({
           type: "recorder/statistics_during_period",
           start_time: iso(startMs),
           end_time: iso(now),
-          statistic_ids: [id],
+          statistic_ids: [statId],
           period,
           types: ["mean", "max"],
         })
-        .then((r) => r?.[id] ?? [])
+        .then((r) => r?.[statId] ?? [])
         .catch(() => []);
 
     const [short, hourly, daily] = await Promise.all([
-      call("5minute", now - dayMs),
-      call("hour", now - 10 * dayMs),
-      call("day", now - 30 * dayMs),
+      call(id, "5minute", now - dayMs),
+      call(id, "hour", now - 10 * dayMs),
+      call(id, "day", now - 30 * dayMs),
     ]);
     this._stats = { short, hourly, daily };
+
+    // A 24 h (5-minute) series for every other discovered reading, so the
+    // expanded view can stack a chart per sensor at the bottom.
+    this._relatedIds(hass.states[id]);
+    const secKeys = Object.keys(this._related).filter(
+      (k) => k !== "primary" && this._related[k] && this._related[k] !== id
+    );
+    const secStats = {};
+    await Promise.all(
+      secKeys.map(async (k) => {
+        secStats[k] = { short: await call(this._related[k], "5minute", now - dayMs) };
+      })
+    );
+    this._secStats = secStats;
     this._statsCacheAt = Date.now();
   }
 
@@ -485,6 +527,11 @@ class AirQualitySceneCard extends HTMLElement {
     const hass = this._hass;
     const metric = this._metric();
     const state = hass.states[this._config.entity];
+    if (state) this._relatedIds(state);
+    // Other discovered readings get their own 24 h chart, stacked below.
+    const secKeys = state
+      ? CHIP_ORDER.filter((k) => k !== metric.key && this._related?.[k])
+      : [];
     const value = state ? Number(state.state) : NaN;
     const cat = Number.isNaN(value) ? null : this._categoryFor(value);
     const stats = this._stats ?? { short: [], hourly: [], daily: [] };
@@ -608,36 +655,53 @@ class AirQualitySceneCard extends HTMLElement {
         </div>
         <div class="section">
           <h3>${metric.labelHtml} — last 24 hours <span class="unit">${metric.unit}</span></h3>
-          <div class="chart24"></div>
+          <div class="chart24" data-reading="__primary"></div>
         </div>
         <div class="section">
           <h3>${metric.labelHtml} — last 10 days by hour</h3>
           <div class="heatmap"></div>
           <div class="legend"></div>
         </div>
+        ${secKeys.length ? `<h2 class="subhead">Every reading — last 24 hours</h2>` : ""}
+        ${secKeys
+          .map((k) => {
+            const rm = this._readingMetric(k);
+            return `
+        <div class="section">
+          <h3>${rm.labelHtml} — last 24 hours ${rm.unit ? `<span class="unit">${rm.unit}</span>` : ""}</h3>
+          <div class="chart24" data-reading="${k}"></div>
+        </div>`;
+          })
+          .join("")}
         <div class="attribution">${metric.attribution}</div>
       </div>`;
 
     overlay.querySelector(".backdrop").addEventListener("click", () => this._closeOverlay());
     overlay.querySelector(".close").addEventListener("click", () => this._closeOverlay());
 
-    this._render24hChart(overlay.querySelector(".chart24"), stats);
+    this._render24hChart(overlay.querySelector('.chart24[data-reading="__primary"]'), stats, metric);
     this._renderHeatmap(overlay.querySelector(".heatmap"), stats.hourly);
     overlay.querySelector(".legend").innerHTML = metric.categories
       .map((c) => `<span class="lg"><i style="background:${c.color}"></i>${c.label}</span>`)
       .join("");
+    for (const k of secKeys) {
+      this._render24hChart(
+        overlay.querySelector(`.chart24[data-reading="${k}"]`),
+        this._secStats?.[k] ?? { short: [] },
+        this._readingMetric(k)
+      );
+    }
   }
 
   _hourLabel(date) {
     return date.toLocaleTimeString(this._hass?.locale?.language, { hour: "numeric" });
   }
 
-  _render24hChart(el, stats) {
+  _render24hChart(el, stats, metric = this._metric()) {
     // 48 half-hour buckets from 5-minute statistics; hourly fallback.
-    const metric = this._metric();
     const now = Date.now();
     const bucketMs = 30 * 60e3;
-    const src = stats.short.length ? stats.short : stats.hourly;
+    const src = stats.short?.length ? stats.short : stats.hourly ?? [];
     const startOf = (r) => (typeof r.start === "number" ? r.start : Date.parse(r.start));
     const buckets = new Array(48).fill(null).map(() => []);
     const t0 = now - 48 * bucketMs;
@@ -664,13 +728,13 @@ class AirQualitySceneCard extends HTMLElement {
     values.forEach((v, i) => {
       const x = padL + i * bw;
       if (v != null) {
-        const c = this._categoryFor(v);
+        const c = this._catForMetric(metric, v);
         const h = Math.max(2, plotH - (y(v) - padT));
         bars += `<rect x="${(x + 0.75).toFixed(1)}" y="${y(v).toFixed(1)}" width="${(bw - 1.5).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${c.color}" stroke="rgba(0,0,0,.14)" stroke-width="0.5"/>`;
       }
       const when = new Date(t0 + i * bucketMs);
       hits += `<rect class="hit" x="${x}" y="0" width="${bw}" height="${H - padB}" fill="transparent"
-        data-tip="${v == null ? "no data" : `${fmt(v, metric.decimals)} ${metric.unit} · ${this._categoryFor(v).label}`} — ${this._hourLabel(when)}"/>`;
+        data-tip="${v == null ? "no data" : `${fmt(v, metric.decimals)} ${metric.unit} · ${this._catForMetric(metric, v).label}`.trim()} — ${this._hourLabel(when)}"/>`;
     });
 
     const ticks = [0, Math.round(maxV / 2), Math.round(maxV)];
@@ -829,6 +893,8 @@ class AirQualitySceneCard extends HTMLElement {
     .tile-sub { font-size: .75rem; color: var(--secondary-text-color, #666); }
     .section { margin-top: 20px; }
     .section h3 { font-size: .95rem; margin: 0 0 8px; }
+    .subhead { font-size: 1.05rem; margin: 26px 0 0; padding-top: 18px;
+      border-top: 1px solid var(--divider-color, #e0e0e0); }
     .section .unit { font-weight: 400; font-size: .75rem; color: var(--secondary-text-color, #666); }
     .chart { width: 100%; height: auto; }
     .grid { stroke: var(--divider-color, #e0e0e0); stroke-width: 1; }
